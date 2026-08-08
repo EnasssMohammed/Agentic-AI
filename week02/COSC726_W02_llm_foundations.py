@@ -71,7 +71,8 @@ def count_tokens(text: str, tokenizer: dict) -> int:
     log must record WHICH tokenizer produced each count.
     """
     # TODO: replace the line below
-    raise NotImplementedError("count_tokens is not implemented yet")
+    tokens = _greedy_split(text, tokenizer["vocab"])
+    return len(tokens)
 
 
 @dataclass
@@ -102,7 +103,51 @@ def prepare_context(messages: list[str], context_limit: int, reserved_output: in
     choose and LOG - never a silent truncation.
     """
     # TODO: implement both strategies and return a ContextPlan
-    raise NotImplementedError("prepare_context is not implemented yet")
+    budget = context_limit - reserved_output
+
+    if budget < 0:
+        return ContextPlan(
+            rejected=True,
+            reason="reserved_output exceeds context_limit",
+        )
+
+    kept = list(messages)
+    dropped = []
+
+    def total_tokens(items: list[str]) -> int:
+        return sum(count_tokens(msg, tokenizer) for msg in items)
+
+    if total_tokens(kept) <= budget:
+        return ContextPlan(kept=kept)
+
+    if strategy == "reject":
+        return ContextPlan(
+            kept=[],
+            rejected=True,
+            reason=f"messages exceed input budget of {budget} tokens",
+        )
+
+    if strategy == "drop_oldest":
+        while total_tokens(kept) > budget and len(kept) > 1:
+            dropped.append(kept.pop(1))
+
+        if total_tokens(kept) > budget:
+            return ContextPlan(
+                kept=kept,
+                dropped=dropped,
+                rejected=True,
+                reason=f"system message alone exceeds input budget of {budget} tokens",
+            )
+
+        return ContextPlan(
+            kept=kept,
+            dropped=dropped,
+        )
+
+    return ContextPlan(
+        rejected=True,
+        reason=f"unknown strategy: {strategy}",
+    )
 
 
 def sample_next(distribution: dict[str, float], temperature: float,
@@ -121,7 +166,35 @@ def sample_next(distribution: dict[str, float], temperature: float,
     temperature 0 the same token wins every time.
     """
     # TODO: implement greedy and temperature-scaled sampling
-    raise NotImplementedError("sample_next is not implemented yet")
+    if temperature <= 0:
+        return sorted(
+            distribution,
+            key=lambda token: (-distribution[token], token)
+        )[0]
+
+    scaled = {
+        token: probability / temperature
+        for token, probability in distribution.items()
+    }
+
+    max_value = max(scaled.values())
+
+    weights = {
+        token: math.exp(value - max_value)
+        for token, value in scaled.items()
+    }
+
+    total = sum(weights.values())
+
+    r = rng.random() * total
+    cumulative = 0.0
+
+    for token in sorted(weights):
+        cumulative += weights[token]
+        if r < cumulative:
+            return token
+
+    return sorted(weights)[-1]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
